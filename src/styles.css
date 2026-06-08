@@ -278,6 +278,9 @@ button:disabled { cursor: not-allowed; opacity: 0.46; }
 .confidence-medium { background: #fff6e7; color: #b87219; }
 .confidence-low { background: #f3f3f5; color: #676767; }
 .connected { background: #eef9f1; color: var(--green); min-height: 28px; font-size: 13px; font-weight: 650; }
+.yield-chip.fixed { background: #eef4ff; color: var(--blue); }
+.yield-chip.indicative { background: #eef9f1; color: var(--green); }
+.yield-chip.idle { background: #f3f3f5; color: #676767; }
 
 .transactions-title-row {
   display: flex;
@@ -601,6 +604,172 @@ input[type="checkbox"] { width: 18px; height: 18px; accent-color: #2f66f3; }
 .spin { animation: spin 0.8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+.yield-hero-copy {
+  border-top: 1px solid var(--border);
+  padding: 16px 28px 6px;
+}
+.yield-panel {
+  margin-bottom: 28px;
+}
+.yield-panel .page-panel-header {
+  min-height: 78px;
+  padding: 22px 28px 18px;
+  align-items: center;
+}
+.yield-panel .page-panel-header h1 {
+  font-size: 30px;
+}
+.yield-hero-copy h2 {
+  margin: 0 0 6px;
+  font-size: 20px;
+  font-weight: 650;
+  letter-spacing: 0;
+}
+.yield-hero-copy p {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 15px;
+  line-height: 1.35;
+}
+.yield-config-panel {
+  display: grid;
+  grid-template-columns: 1.25fr 0.9fr 0.7fr;
+  gap: 14px;
+  padding: 16px 28px 18px;
+}
+.yield-config-panel label {
+  display: grid;
+  gap: 8px;
+}
+.yield-config-panel label > span {
+  color: var(--muted-foreground);
+  font-size: 14px;
+}
+.yield-config-panel input, .yield-config-panel select {
+  width: 100%;
+  height: 46px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  padding: 0 14px;
+  border-radius: 0;
+  font-size: 16px;
+}
+.yield-input-icon {
+  position: relative;
+}
+.yield-input-icon svg {
+  position: absolute;
+  left: 14px;
+  top: 14px;
+  color: var(--muted-foreground);
+}
+.yield-input-icon input {
+  padding-left: 40px;
+}
+.yield-summary-grid {
+  min-height: 112px;
+  background: #f7f5f3;
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  align-items: center;
+  gap: 18px;
+  padding: 18px 28px;
+}
+.yield-summary-grid .metric strong {
+  font-size: 23px;
+}
+.yield-filter-toolbar {
+  align-items: center;
+  flex-wrap: wrap;
+}
+.yield-filter-toolbar svg {
+  color: var(--muted-foreground);
+  flex-shrink: 0;
+}
+.yield-filter-toolbar input {
+  flex: 0 1 230px;
+  min-width: 190px;
+}
+.yield-toggle {
+  min-height: 48px;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  margin-left: auto;
+}
+.yield-toggle span {
+  color: var(--muted-foreground);
+  padding: 0 12px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.yield-toggle button {
+  height: 46px;
+  border: 0;
+  border-left: 1px solid var(--border);
+  background: transparent;
+  padding: 0 14px;
+  color: #555;
+}
+.yield-toggle button.active {
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+.yield-table {
+  min-width: 820px;
+}
+.yield-table th {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+}
+.yield-table th:first-child,
+.yield-table td:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  background: var(--panel);
+  box-shadow: 1px 0 0 var(--border);
+}
+.yield-table th:first-child {
+  z-index: 4;
+}
+.yield-pinned-row td {
+  background: #fbfcff;
+}
+.yield-pinned-row td:first-child {
+  background: #fbfcff;
+}
+.yield-row-muted td {
+  color: var(--muted-foreground);
+  background: #fbfbfc;
+}
+.yield-row-muted td:first-child {
+  background: #fbfbfc;
+}
+.yield-avatar {
+  background: #eef4ff;
+  color: var(--blue);
+}
+.yield-avatar.mf {
+  background: #eef9f1;
+  color: var(--green);
+}
+.yield-avatar.idle {
+  background: #f3f3f5;
+  color: #676767;
+}
+.yield-methodology {
+  margin: 16px 0 0;
+  color: var(--muted-foreground);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.yield-sheet-table {
+  min-width: 760px;
+}
+
 @media (max-width: 1100px) {
   .figma-shell { display: block; }
   .figma-sidebar { width: 100%; border-right: 0; }
@@ -609,15 +778,18 @@ input[type="checkbox"] { width: 18px; height: 18px; accent-color: #2f66f3; }
   .figma-topbar { height: auto; padding: 16px; }
   .figma-content { padding: 24px 16px 80px; }
   .page-panel-header, .transactions-title-row, .accounting-toolbar, .bulk-bar { flex-direction: column; align-items: stretch; gap: 14px; }
-  .portfolio-metrics, .erp-grid { grid-template-columns: 1fr 1fr; padding: 24px; }
+  .portfolio-metrics, .erp-grid, .yield-summary-grid { grid-template-columns: 1fr 1fr; padding: 24px; }
   .mapping-control { grid-template-columns: 1fr; }
+  .yield-config-panel { grid-template-columns: 1fr; }
+  .yield-toggle { margin-left: 0; }
 }
 
 @media (max-width: 680px) {
-  .portfolio-metrics, .erp-grid, .detail-grid { grid-template-columns: 1fr; }
+  .portfolio-metrics, .erp-grid, .detail-grid, .yield-summary-grid { grid-template-columns: 1fr; }
   .metric { text-align: left; }
   .metric strong { font-size: 30px; }
   .new-transaction .figma-primary { width: 100%; }
   .transaction-menu { width: 100%; }
   .sheet-actions { grid-template-columns: 1fr; }
+  .yield-hero-copy, .yield-config-panel { padding-left: 22px; padding-right: 22px; }
 }

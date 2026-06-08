@@ -6,6 +6,7 @@ import {
   Grid2X2,
   Home,
   Link2,
+  LineChart,
   Search,
   Settings,
   X
@@ -13,7 +14,7 @@ import {
 import type { AccountingStatus, Scenario } from "../types/accounting";
 import { scenarioLabels } from "../data/accountingData";
 
-export type Section = "portfolio" | "transactions" | "erp";
+export type Section = "portfolio" | "transactions" | "yield" | "erp";
 
 export function Layout({
   section,
@@ -29,6 +30,7 @@ export function Layout({
     { id: "home", label: "Home", icon: Home },
     { id: "portfolio", label: "Portfolio", icon: BriefcaseBusiness },
     { id: "explore", label: "Explore", icon: Search },
+    { id: "yield", label: "Yield", icon: LineChart },
     { id: "transactions", label: "Transactions", icon: ArrowLeftRight },
     { id: "erp", label: "Integrations", icon: Link2, caret: true },
     { id: "settings", label: "Settings", icon: Settings }
@@ -50,7 +52,7 @@ export function Layout({
               <button
                 key={item.id}
                 onClick={() => {
-                  if (item.id === "portfolio" || item.id === "transactions" || item.id === "erp") setSection(item.id);
+                  if (item.id === "portfolio" || item.id === "transactions" || item.id === "yield" || item.id === "erp") setSection(item.id);
                 }}
                 className={`figma-nav-item ${active ? "active" : ""}`}
               >
@@ -79,9 +81,9 @@ export function Layout({
   );
 }
 
-export function PagePanel({ title, children, action }: { title: string; children: React.ReactNode; action?: React.ReactNode }) {
+export function PagePanel({ title, children, action, className = "" }: { title: string; children: React.ReactNode; action?: React.ReactNode; className?: string }) {
   return (
-    <section className="page-panel">
+    <section className={`page-panel ${className}`}>
       <div className="page-panel-header">
         <h1>{title}</h1>
         {action}

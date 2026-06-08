@@ -5,6 +5,7 @@ import { ERPIntegration } from "./components/ERPIntegration";
 import { Layout, type Section } from "./components/Shared";
 import { PortfolioAccounting } from "./components/PortfolioAccounting";
 import { TransactionsAccounting } from "./components/TransactionsAccounting";
+import { YieldVisualisation } from "./components/YieldVisualisation";
 
 export function App() {
   const [section, setSection] = useState<Section>("transactions");
@@ -101,6 +102,7 @@ export function App() {
           onUpdateLine={updateTransactionLine}
         />
       )}
+      {section === "yield" && <YieldVisualisation />}
       {section === "erp" && <ERPIntegration />}
     </Layout>
   );
