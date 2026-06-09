@@ -93,6 +93,18 @@ export interface YieldComparisonRow {
   scenarios?: YieldScenario;
   estimatedScenarios?: YieldScenario;
   annualisedScenarios?: YieldScenario;
+  sourceUrl?: string;
+  fetchedAt?: string;
+  effectiveFrom?: string;
+  amountSlab?: string;
+  tenureLabel?: string;
+  lastSyncStatus?: string;
+  isLive?: boolean;
+  schemeCode?: string;
+  navDate?: string;
+  navValue?: number;
+  dataSource?: string;
+  historyPoints?: number;
 }
 
 export interface YieldCategoryRow {

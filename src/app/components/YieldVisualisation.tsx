@@ -1,25 +1,52 @@
-import { Filter, IndianRupee, Landmark, LineChart, TrendingUp } from "lucide-react";
-import { useMemo, useState } from "react";
+import { Filter, IndianRupee, Landmark, RefreshCw, TrendingUp } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  buildMfCategoryRows,
   buildYieldRows,
+  calculateFdReturn,
   formatCurrency,
   formatIndianAmountInput,
+  formatPercent,
   parseAmount,
   tenureOptions
 } from "../data/yieldData";
-import type { YieldCategoryRow, YieldComparisonRow } from "../types/yield";
-import { Metric, PagePanel, Sheet } from "./Shared";
+import {
+  fetchFdRatesSyncStatus,
+  fetchLatestFdRates,
+  hasFdRatesApi,
+  type FdRateApiRow,
+  type FdRatesSyncStatus
+} from "../data/fdRatesApi";
+import {
+  fetchLatestMfRates,
+  fetchMfRatesSyncStatus,
+  hasMfRatesApi,
+  triggerAllRatesSync,
+  type MfRateApiRow,
+  type MfRatesSyncStatus
+} from "../data/mfRatesApi";
+import type { InstrumentType, YieldComparisonRow } from "../types/yield";
+import { Sheet } from "./Shared";
 
 const methodologyCopy =
   "Mutual fund estimates are calculated using historical rolling NAV returns for the selected tenure. Conservative, balanced, and aggressive estimates represent the 25th, 50th, and 75th percentile historical outcomes. Actual returns may vary.";
 
 type DecisionRow =
   | { kind: "fd"; row: YieldComparisonRow }
-  | { kind: "mf-category"; row: YieldCategoryRow }
+  | { kind: "mf"; row: YieldComparisonRow }
   | { kind: "current"; row: YieldComparisonRow };
 
-type AnnualisedMode = "median" | "mean";
+type RankingMode = "all" | "min" | "median" | "max";
+type SortOrder = "desc" | "asc";
+
+const investmentTypeOrder: InstrumentType[] = ["Money Market Fund", "Liquid Mutual Fund", "Overnight Fund", "Fixed Deposit"];
+const instrumentOptions: ("All" | InstrumentType)[] = [
+  "All",
+  "Money Market Fund",
+  "Liquid Mutual Fund",
+  "Overnight Fund",
+  "Fixed Deposit",
+  "Current Account"
+];
 
 export function YieldVisualisation() {
   const [amountInput, setAmountInput] = useState("50,00,000");
@@ -27,114 +54,153 @@ export function YieldVisualisation() {
   const [customTenure, setCustomTenure] = useState("120");
   const [instrumentFilter, setInstrumentFilter] = useState("All");
   const [providerFilter, setProviderFilter] = useState("All");
-  const [annualisedMode, setAnnualisedMode] = useState<AnnualisedMode>("median");
+  const [rankingMode, setRankingMode] = useState<RankingMode>("all");
+  const [sortOrder, setSortOrder] = useState<SortOrder>("desc");
   const [activeRow, setActiveRow] = useState<YieldComparisonRow | null>(null);
-  const [activeCategory, setActiveCategory] = useState<YieldCategoryRow | null>(null);
+  const [liveFdRows, setLiveFdRows] = useState<YieldComparisonRow[]>([]);
+  const [liveMfRows, setLiveMfRows] = useState<YieldComparisonRow[]>([]);
+  const [syncStatus, setSyncStatus] = useState<FdRatesSyncStatus | null>(null);
+  const [mfSyncStatus, setMfSyncStatus] = useState<MfRatesSyncStatus | null>(null);
+  const [fdApiError, setFdApiError] = useState<string | null>(hasFdRatesApi() ? null : "FD rates API not configured");
+  const [mfApiError, setMfApiError] = useState<string | null>(hasMfRatesApi() ? null : "MF rates API not configured");
+  const [syncing, setSyncing] = useState(false);
 
   const principal = parseAmount(amountInput);
   const tenureDays = selectedTenure === -1 ? Math.max(1, Number(customTenure) || 1) : selectedTenure;
   const rows = useMemo(() => buildYieldRows(principal, tenureDays), [principal, tenureDays]);
-  const categoryRows = useMemo(() => buildMfCategoryRows(principal, tenureDays, rows), [principal, rows, tenureDays]);
 
-  const fdRows = rows.filter((row) => row.instrument === "Fixed Deposit");
+  const mockFdRows = rows.filter((row) => row.instrument === "Fixed Deposit");
+  const fdRows = liveFdRows.length ? liveFdRows : mockFdRows;
+  const mockMfRows = rows.filter((row) => isMutualFundInstrument(row.instrument));
+  const mfRows = liveMfRows.length ? liveMfRows : mockMfRows;
   const currentRow = rows.find((row) => row.instrument === "Current Account");
   const fdProviders = ["All", ...Array.from(new Set(fdRows.map((row) => row.provider)))];
 
-  const bestFd = fdRows.find((row) => row.available);
-  const bestMf = categoryRows.find((row) => row.available);
-  const bestReturn = [...fdRows, ...categoryRows].filter((row) => row.available).reduce((best, row) => Math.max(best, row.estimatedReturn ?? 0), 0);
-  const deploymentRows: DecisionRow[] = [
-    ...categoryRows.map((row): DecisionRow => ({ kind: "mf-category", row })),
-    ...fdRows.map((row): DecisionRow => ({ kind: "fd", row })),
-    ...(currentRow ? [{ kind: "current", row: currentRow } satisfies DecisionRow] : [])
-  ];
+  const deploymentRows = getListingRows(rankingMode, sortOrder, { mfRows, fdRows, currentRow });
   const filteredDeploymentRows = deploymentRows.filter(({ kind, row }) => {
     const matchesInstrument =
       instrumentFilter === "All" ||
       (instrumentFilter === "Fixed Deposit" && kind === "fd") ||
       (instrumentFilter === "Current Account" && kind === "current") ||
-      row.name === instrumentFilter ||
       row.instrument === instrumentFilter;
     const matchesProvider = providerFilter === "All" || kind !== "fd" || (row as YieldComparisonRow).provider === providerFilter;
     return matchesInstrument && matchesProvider;
   });
 
+  const loadLiveFdRows = useCallback(async () => {
+    if (!hasFdRatesApi()) return;
+    const response = await fetchLatestFdRates(principal, tenureDays);
+    setSyncStatus(response.sync);
+    setLiveFdRows(response.rows.map((row) => mapApiFdRow(row, principal, tenureDays)));
+    setFdApiError(null);
+  }, [principal, tenureDays]);
+
+  const loadLiveMfRows = useCallback(async () => {
+    if (!hasMfRatesApi()) return;
+    const response = await fetchLatestMfRates(principal, tenureDays);
+    setMfSyncStatus(response.sync);
+    setLiveMfRows(response.rows.map((row) => mapApiMfRow(row, principal, tenureDays)));
+    setMfApiError(null);
+  }, [principal, tenureDays]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!hasFdRatesApi()) return;
+    fetchLatestFdRates(principal, tenureDays)
+      .then((response) => {
+        if (cancelled) return;
+        setSyncStatus(response.sync);
+        setLiveFdRows(response.rows.map((row) => mapApiFdRow(row, principal, tenureDays)));
+        setFdApiError(null);
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        setLiveFdRows([]);
+        setFdApiError(error instanceof Error ? error.message : "FD rates API unavailable");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [principal, tenureDays]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!hasMfRatesApi()) return;
+    fetchLatestMfRates(principal, tenureDays)
+      .then((response) => {
+        if (cancelled) return;
+        setMfSyncStatus(response.sync);
+        setLiveMfRows(response.rows.map((row) => mapApiMfRow(row, principal, tenureDays)));
+        setMfApiError(null);
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        setLiveMfRows([]);
+        setMfApiError(error instanceof Error ? error.message : "MF rates API unavailable");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [principal, tenureDays]);
+
+  const handleSyncFdRates = async () => {
+    if (!hasFdRatesApi() && !hasMfRatesApi()) {
+      setFdApiError("Set VITE_API_BASE_URL to enable live sync");
+      setMfApiError("Set VITE_API_BASE_URL to enable live sync");
+      return;
+    }
+    setSyncing(true);
+    try {
+      const startStatus = await triggerAllRatesSync();
+      if (startStatus.mf) setMfSyncStatus(startStatus.mf);
+      let fdStatus = await fetchFdRatesSyncStatus();
+      let mfStatus = await fetchMfRatesSyncStatus();
+      setSyncStatus(fdStatus);
+      setMfSyncStatus(mfStatus);
+      for (let attempt = 0; (fdStatus.status === "running" || mfStatus.status === "running") && attempt < 60; attempt += 1) {
+        await wait(2000);
+        fdStatus = await fetchFdRatesSyncStatus();
+        mfStatus = await fetchMfRatesSyncStatus();
+        setSyncStatus(fdStatus);
+        setMfSyncStatus(mfStatus);
+      }
+      await loadLiveFdRows();
+      await loadLiveMfRows();
+      setFdApiError(null);
+      setMfApiError(null);
+    } catch (error) {
+      setFdApiError(error instanceof Error ? error.message : "FD rates sync failed");
+      setMfApiError(error instanceof Error ? error.message : "MF rates sync failed");
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   return (
-    <>
-      <PagePanel
-        title="Yield Visualisation"
-        className="yield-panel"
-        action={
-          <button className="figma-primary">
-            <LineChart size={18} /> Compare instruments
-          </button>
-        }
-      >
-        <div className="yield-hero-copy">
-          <h2>Compare returns across FDs, liquid funds, and other treasury instruments</h2>
-          <p>Enter an amount and tenure to compare actual estimated returns across available deployment options.</p>
-        </div>
-
-        <div className="yield-config-panel">
-          <label>
-            <span>Deployable amount</span>
-            <div className="yield-input-icon">
-              <IndianRupee size={18} />
-              <input
-                value={amountInput}
-                onChange={(event) => setAmountInput(formatIndianAmountInput(parseAmount(event.target.value)))}
-                aria-label="Deployable amount"
-              />
-            </div>
-          </label>
-
-          <label>
-            <span>Selected tenure</span>
-            <select value={selectedTenure} onChange={(event) => setSelectedTenure(Number(event.target.value))}>
-              {tenureOptions.map((option) => (
-                <option key={option.days} value={option.days}>{option.label}</option>
-              ))}
-              <option value={-1}>Custom tenure</option>
-            </select>
-          </label>
-
-          {selectedTenure === -1 && (
-            <label>
-              <span>Custom days</span>
-              <input value={customTenure} onChange={(event) => setCustomTenure(event.target.value.replace(/\D/g, ""))} />
-            </label>
-          )}
-        </div>
-
-        <div className="yield-summary-grid">
-          <Metric label="Deployable Amount" value={formatCurrency(principal)} />
-          <Metric label="Selected Tenure" value={`${tenureDays} days`} />
-          <Metric label="Best FD Return" value={bestFd ? bestFd.estimatedReturnLabel : "Not available"} />
-          <Metric label="Best Indicative MF Return" value={bestMf ? formatCurrency(bestMf.estimatedReturn ?? 0) : "Not available"} />
-          <Metric label="Opportunity Cost" value={formatCurrency(bestReturn)} tone="green" />
-        </div>
-      </PagePanel>
-
+    <div className="yield-page">
       <section className="figma-section">
         <div className="section-title">
           <h2>Deployment comparison</h2>
-          <span>Market-linked categories first, followed by bank FD rates</span>
+          <span>All funds and FD rates sorted by annualised return</span>
         </div>
         <div className="accounting-toolbar yield-filter-toolbar">
           <Filter size={18} />
           <select value={instrumentFilter} onChange={(event) => setInstrumentFilter(event.target.value)}>
-            <option>All</option>
-            <option>Fixed Deposit</option>
-            {categoryRows.map((row) => <option key={row.id}>{row.name}</option>)}
-            <option>Current Account</option>
+            {instrumentOptions.map((option) => <option key={option}>{option}</option>)}
           </select>
           <select value={providerFilter} onChange={(event) => setProviderFilter(event.target.value)}>
             {fdProviders.map((provider) => <option key={provider}>{provider}</option>)}
           </select>
+          <select value={sortOrder} onChange={(event) => setSortOrder(event.target.value as SortOrder)}>
+            <option value="desc">Descending annualised</option>
+            <option value="asc">Ascending annualised</option>
+          </select>
           <div className="yield-toggle">
-            <span>MF annualised</span>
-            <button className={annualisedMode === "median" ? "active" : ""} onClick={() => setAnnualisedMode("median")}>Median</button>
-            <button className={annualisedMode === "mean" ? "active" : ""} onClick={() => setAnnualisedMode("mean")}>Mean</button>
+            <span>Return set</span>
+            <button className={rankingMode === "all" ? "active" : ""} onClick={() => setRankingMode("all")}>All</button>
+            <button className={rankingMode === "min" ? "active" : ""} onClick={() => setRankingMode("min")}>Min</button>
+            <button className={rankingMode === "median" ? "active" : ""} onClick={() => setRankingMode("median")}>Median</button>
+            <button className={rankingMode === "max" ? "active" : ""} onClick={() => setRankingMode("max")}>Max</button>
           </div>
         </div>
         <div className="table-wrap">
@@ -152,45 +218,73 @@ export function YieldVisualisation() {
                   key={`${kind}-table-${row.id}`}
                   kind={kind}
                   row={row}
-                  annualisedMode={annualisedMode}
-                  onClick={() => {
-                    if (kind === "mf-category") setActiveCategory(row as YieldCategoryRow);
-                    else setActiveRow(row as YieldComparisonRow);
-                  }}
+                  onClick={() => setActiveRow(row)}
                 />
               ))}
             </tbody>
           </table>
         </div>
-        <p className="yield-methodology">MF category estimates use pooled historical rolling NAV returns. Open a category row to inspect representative funds and methodology.</p>
+        <p className="yield-methodology">
+          Mutual fund rows use {liveMfRows.length ? "AMFI NAV history" : "mock fallback NAV history"}. FD rows use {liveFdRows.length ? "live scraper output" : "mock fallback rates"}.
+        </p>
       </section>
 
+      <div className="yield-floating-config">
+        <div className="yield-floating-copy">
+          <h2>Compare returns across FDs, liquid funds, and other treasury instruments</h2>
+          <span>{syncStatusLabel(syncStatus, fdApiError)} · {mfSyncStatusLabel(mfSyncStatus, mfApiError)}</span>
+        </div>
+        <label>
+          <span>Deployable amount</span>
+          <div className="yield-input-icon">
+            <IndianRupee size={18} />
+            <input
+              value={amountInput}
+              onChange={(event) => setAmountInput(formatIndianAmountInput(parseAmount(event.target.value)))}
+              aria-label="Deployable amount"
+            />
+          </div>
+        </label>
+        <label>
+          <span>Selected tenure</span>
+          <select value={selectedTenure} onChange={(event) => setSelectedTenure(Number(event.target.value))}>
+            {tenureOptions.map((option) => (
+              <option key={option.days} value={option.days}>{option.label}</option>
+            ))}
+            <option value={-1}>Custom tenure</option>
+          </select>
+        </label>
+        {selectedTenure === -1 && (
+          <label>
+            <span>Custom days</span>
+            <input value={customTenure} onChange={(event) => setCustomTenure(event.target.value.replace(/\D/g, ""))} />
+          </label>
+        )}
+        <button className="figma-primary" onClick={handleSyncFdRates} disabled={syncing}>
+          <RefreshCw size={18} className={syncing || syncStatus?.status === "running" || mfSyncStatus?.status === "running" ? "spin" : ""} /> Sync rates
+        </button>
+      </div>
+
       {activeRow && <YieldDetailSheet row={activeRow} onClose={() => setActiveRow(null)} />}
-      {activeCategory && <MfCategorySheet category={activeCategory} annualisedMode={annualisedMode} onClose={() => setActiveCategory(null)} />}
-    </>
+    </div>
   );
 }
 
 function DeploymentTableRow({
   kind,
   row,
-  annualisedMode,
   onClick
 }: {
   kind: DecisionRow["kind"];
-  row: YieldComparisonRow | YieldCategoryRow;
-  annualisedMode: AnnualisedMode;
+  row: YieldComparisonRow;
   onClick: () => void;
 }) {
   const variant = kind === "fd" ? "fd" : kind === "current" ? "idle" : "mf";
-  const annualisedLabel =
-    kind === "mf-category" && annualisedMode === "mean"
-      ? (row as YieldCategoryRow).meanAnnualisedReturnLabel ?? "Not available"
-      : row.annualisedReturnLabel;
-  const muted = kind === "mf-category" ? !(row as YieldCategoryRow).available : !(row as YieldComparisonRow).available;
+  const annualisedLabel = getAnnualisedReturnLabel(row);
+  const muted = !row.available;
 
   return (
-    <tr onClick={onClick} className={`${muted ? "yield-row-muted" : ""} ${kind === "mf-category" ? "yield-pinned-row" : ""}`}>
+    <tr onClick={onClick} className={muted ? "yield-row-muted" : ""}>
       <td>
         <div className="fund-cell">
           <YieldIcon variant={variant} />
@@ -203,14 +297,179 @@ function DeploymentTableRow({
   );
 }
 
-function getOptionLabel(kind: DecisionRow["kind"], row: YieldComparisonRow | YieldCategoryRow) {
-  if (kind === "fd") return `${(row as YieldComparisonRow).provider} FD`;
-  if (kind === "current") return "Current Account";
-  return (row as YieldCategoryRow).name;
+function getListingRows(
+  mode: RankingMode,
+  sortOrder: SortOrder,
+  {
+    mfRows,
+    fdRows,
+    currentRow
+  }: { mfRows: YieldComparisonRow[]; fdRows: YieldComparisonRow[]; currentRow?: YieldComparisonRow }
+): DecisionRow[] {
+  const eligibleMfRows = mfRows.filter((row) => row.available);
+  const eligibleFdRows = fdRows.filter((row) => row.available);
+  const current = currentRow ? [{ kind: "current", row: currentRow } satisfies DecisionRow] : [];
+
+  if (mode === "all") {
+    return [
+      ...eligibleMfRows.map((row): DecisionRow => ({ kind: "mf", row })),
+      ...eligibleFdRows.map((row): DecisionRow => ({ kind: "fd", row }))
+    ].sort((a, b) => sortByAnnualised(a.row, b.row, sortOrder)).concat(current);
+  }
+
+  const representativeRows = investmentTypeOrder.flatMap((instrument): DecisionRow[] => {
+    const sourceRows = instrument === "Fixed Deposit" ? eligibleFdRows : eligibleMfRows.filter((row) => row.instrument === instrument);
+    const row = pickRepresentativeRow(sourceRows, mode);
+    if (!row) return [];
+    return [{ kind: instrument === "Fixed Deposit" ? "fd" : "mf", row }];
+  });
+
+  return representativeRows.sort((a, b) => sortByAnnualised(a.row, b.row, sortOrder)).concat(current);
 }
 
-function getEstimatedReturnLabel(kind: DecisionRow["kind"], row: YieldComparisonRow | YieldCategoryRow) {
-  if (kind === "mf-category") return formatCurrency(row.estimatedReturn ?? 0);
+function pickRepresentativeRow(rows: YieldComparisonRow[], mode: Exclude<RankingMode, "all">) {
+  const sortedRows = [...rows].sort((a, b) => getRankingAnnualisedReturn(a) - getRankingAnnualisedReturn(b));
+  if (!sortedRows.length) return undefined;
+  if (mode === "min") return sortedRows[0];
+  if (mode === "max") return sortedRows[sortedRows.length - 1];
+  return sortedRows[Math.floor(sortedRows.length / 2)];
+}
+
+function sortByAnnualisedDesc(a: YieldComparisonRow, b: YieldComparisonRow) {
+  return sortByAnnualised(a, b, "desc");
+}
+
+function sortByAnnualised(a: YieldComparisonRow, b: YieldComparisonRow, sortOrder: SortOrder) {
+  const delta = getRankingAnnualisedReturn(b) - getRankingAnnualisedReturn(a);
+  return sortOrder === "desc" ? delta : -delta;
+}
+
+function getRankingAnnualisedReturn(row: YieldComparisonRow) {
+  return row.annualisedReturn ?? 0;
+}
+
+function mapApiFdRow(row: FdRateApiRow, principal: number, tenureDays: number): YieldComparisonRow {
+  const annualRate = row.rate_pa / 100;
+  const estimatedReturn = calculateFdReturn(principal, annualRate, tenureDays);
+  const periodReturn = annualRate * tenureDays / 365;
+
+  return {
+    id: `live-fd-${row.bank_id}`,
+    instrument: "Fixed Deposit",
+    name: `${row.bank_name} FD`,
+    provider: row.bank_name,
+    returnType: "Fixed",
+    selectedTenureDays: tenureDays,
+    periodReturnLabel: formatPercent(periodReturn),
+    estimatedReturnLabel: row.estimated_return_label || formatCurrency(estimatedReturn),
+    annualisedReturnLabel: row.annualised_return_label || `${formatPercent(annualRate)} p.a.`,
+    liquidity: "Premature withdrawal penalty applicable",
+    minimumInvestment: 0,
+    available: true,
+    dataSufficient: true,
+    lastUpdated: formatTimestamp(row.fetched_at) ?? row.last_sync_status ?? "Live scraper output",
+    periodReturn,
+    estimatedReturn: row.estimated_return ?? estimatedReturn,
+    annualisedReturn: annualRate,
+    sourceUrl: row.source_url,
+    fetchedAt: row.fetched_at,
+    effectiveFrom: row.effective_from,
+    amountSlab: row.amount_slab,
+    tenureLabel: row.tenure_label,
+    lastSyncStatus: row.last_sync_status,
+    isLive: true
+  };
+}
+
+function mapApiMfRow(row: MfRateApiRow, principal: number, tenureDays: number): YieldComparisonRow {
+  const estimatedReturn = row.estimated_return;
+  return {
+    id: `amfi-mf-${row.scheme_code}`,
+    instrument: row.instrument,
+    name: row.scheme_name,
+    provider: row.amc,
+    returnType: "Indicative Range",
+    selectedTenureDays: tenureDays,
+    periodReturnLabel: row.period_return_range_label ?? row.period_return_label ?? "Insufficient NAV history",
+    estimatedReturnLabel: row.estimated_return_range_label ?? row.estimated_return_label,
+    annualisedReturnLabel: row.annualised_return_label,
+    liquidity: row.settlement,
+    minimumInvestment: row.minimum_investment,
+    available: row.data_sufficient && principal >= row.minimum_investment,
+    dataSufficient: row.data_sufficient,
+    dataMessage: row.data_message,
+    lastUpdated: row.nav_date ?? row.last_sync_status ?? "AMFI NAV",
+    periodReturn: row.period_return,
+    estimatedReturn,
+    annualisedReturn: row.annualised_return,
+    scenarios: row.scenarios,
+    estimatedScenarios: row.estimated_scenarios,
+    annualisedScenarios: row.annualised_scenarios,
+    sourceUrl: row.source_url,
+    schemeCode: row.scheme_code,
+    navDate: row.nav_date,
+    navValue: row.nav_value,
+    dataSource: "AMFI",
+    historyPoints: row.history_points,
+    lastSyncStatus: row.last_sync_status,
+    isLive: true
+  };
+}
+
+function wait(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function syncStatusLabel(status: FdRatesSyncStatus | null, error: string | null) {
+  if (status?.status === "running") return "Syncing FD rates";
+  if (status?.status === "partial_success") return `Partial success · ${status.row_count} rows`;
+  if (status?.status === "failed") return "FD sync failed";
+  if (status?.finished_at) return `Last synced ${formatTimestamp(status.finished_at)}`;
+  if (error) return "Using mock FD rates";
+  return "Live FD sync ready";
+}
+
+function mfSyncStatusLabel(status: MfRatesSyncStatus | null, error: string | null) {
+  if (status?.status === "running") return "Syncing AMFI NAVs";
+  if (status?.status === "failed") return "AMFI sync failed";
+  if (status?.row_count) return `AMFI ${status.row_count} schemes`;
+  if (status?.finished_at) return `AMFI synced ${formatTimestamp(status.finished_at)}`;
+  if (error) return "Using mock MF data";
+  return "AMFI sync ready";
+}
+
+function formatTimestamp(value?: string | null) {
+  if (!value) return undefined;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("en-IN", {
+    day: "2-digit",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(date);
+}
+
+function isMutualFundInstrument(instrument: InstrumentType) {
+  return instrument === "Money Market Fund" || instrument === "Liquid Mutual Fund" || instrument === "Overnight Fund";
+}
+
+function getOptionLabel(kind: DecisionRow["kind"], row: YieldComparisonRow) {
+  if (kind === "fd") return `${row.provider} FD`;
+  if (kind === "current") return "Current Account";
+  return row.name;
+}
+
+function getAnnualisedReturnLabel(row: YieldComparisonRow) {
+  if (isMutualFundInstrument(row.instrument) && row.annualisedReturn !== undefined) {
+    return `${formatPercent(row.annualisedReturn)} p.a.`;
+  }
+  if (row.instrument === "Current Account") return row.annualisedReturnLabel;
+  return row.annualisedReturnLabel;
+}
+
+function getEstimatedReturnLabel(kind: DecisionRow["kind"], row: YieldComparisonRow) {
+  if (kind === "mf") return row.estimatedReturn === undefined ? "Not available" : formatCurrency(row.estimatedReturn);
   return row.estimatedReturnLabel;
 }
 
@@ -250,77 +509,26 @@ function YieldDetailSheet({ row, onClose }: { row: YieldComparisonRow; onClose: 
           <Detail label="Annualised Return" value={row.annualisedReturnLabel} />
           <Detail label="Liquidity" value={row.liquidity} />
           <Detail label="Last Updated" value={row.lastUpdated} />
+          {row.schemeCode && <Detail label="AMFI Scheme Code" value={row.schemeCode} />}
+          {row.navDate && <Detail label="Latest NAV Date" value={row.navDate} />}
+          {row.navValue !== undefined && <Detail label="Latest NAV" value={`₹${row.navValue.toFixed(4)}`} />}
+          {row.historyPoints !== undefined && <Detail label="History Coverage" value={`${row.historyPoints} NAV points`} />}
+          {row.tenureLabel && <Detail label="Scraped Tenure" value={row.tenureLabel} />}
+          {row.amountSlab && <Detail label="Amount Slab" value={row.amountSlab} />}
+          {row.effectiveFrom && <Detail label="Effective From" value={row.effectiveFrom} />}
+          {row.lastSyncStatus && <Detail label="Sync Status" value={row.lastSyncStatus.replaceAll("_", " ")} />}
         </div>
+        {row.sourceUrl && (
+          <a className="yield-source-link" href={row.sourceUrl} target="_blank" rel="noreferrer">
+            View scraped source
+          </a>
+        )}
         {row.scenarios && row.estimatedScenarios && <ScenarioTable scenarios={row.scenarios} estimatedScenarios={row.estimatedScenarios} />}
         <p className="yield-methodology sheet-copy">
           {row.returnType === "Indicative Range"
             ? methodologyCopy
             : "Fixed deposits use the selected amount, quoted annual FD rate, and selected tenure. Current account idle cash uses the available account interest rate, defaulting to 0%."}
         </p>
-        <div className="sheet-actions">
-          <button className="figma-secondary" onClick={onClose}>Close</button>
-          <button className="figma-primary" disabled>Proceed later</button>
-        </div>
-      </div>
-    </Sheet>
-  );
-}
-
-function MfCategorySheet({ category, annualisedMode, onClose }: { category: YieldCategoryRow; annualisedMode: AnnualisedMode; onClose: () => void }) {
-  return (
-    <Sheet width={780} onClose={onClose}>
-      <div className="sheet-header">
-        <div className="sheet-fund-title">
-          <YieldIcon variant="mf" />
-          <div>
-            <h2>{category.name}</h2>
-            <span>{category.eligibleFundCount}/{category.fundCount} funds covered · {category.selectedTenureDays} days</span>
-          </div>
-        </div>
-      </div>
-      <div className="sheet-body">
-        <div className="amount-hero">
-          <span>Category estimated return range</span>
-          <strong>{category.estimatedReturnLabel}</strong>
-        </div>
-        <div className="detail-grid">
-          <Detail label="Balanced Estimate" value={formatCurrency(category.estimatedReturn ?? 0)} />
-          <Detail label="Period Return Range" value={category.periodReturnLabel} />
-          <Detail label="Median Annualised" value={category.annualisedReturnLabel} />
-          <Detail label="Mean Annualised" value={category.meanAnnualisedReturnLabel ?? "Not available"} />
-          <Detail label="Settlement" value={category.liquidity} />
-          <Detail label="Current Toggle" value={annualisedMode === "mean" ? "Mean" : "Median"} />
-        </div>
-        {category.scenarios && category.estimatedScenarios && <ScenarioTable scenarios={category.scenarios} estimatedScenarios={category.estimatedScenarios} />}
-        <div className="section-title compact">
-          <h2>Representative funds</h2>
-          <span>Fund-level detail</span>
-        </div>
-        <div className="voucher-table-wrap">
-          <table className="voucher-table yield-sheet-table">
-            <thead>
-              <tr>
-                <th>Scheme</th>
-                <th>AMC</th>
-                <th>Range</th>
-                <th className="align-right">Balanced Estimate</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {category.fundRows.map((row) => (
-                <tr key={row.id}>
-                  <td>{row.name}</td>
-                  <td>{row.provider}</td>
-                  <td>{row.estimatedReturnLabel}</td>
-                  <td className="align-right">{row.estimatedReturn ? formatCurrency(row.estimatedReturn) : "Not available"}</td>
-                  <td>{row.dataMessage ?? row.lastUpdated}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        <p className="yield-methodology sheet-copy">{methodologyCopy}</p>
         <div className="sheet-actions">
           <button className="figma-secondary" onClick={onClose}>Close</button>
           <button className="figma-primary" disabled>Proceed later</button>
