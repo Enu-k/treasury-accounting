@@ -1,5 +1,5 @@
 import { Filter, IndianRupee, Landmark, RefreshCw, TrendingUp } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   buildYieldRows,
   calculateFdReturn,
@@ -39,8 +39,7 @@ type RankingMode = "all" | "min" | "median" | "max";
 type SortOrder = "desc" | "asc";
 
 const investmentTypeOrder: InstrumentType[] = ["Money Market Fund", "Liquid Mutual Fund", "Overnight Fund", "Fixed Deposit"];
-const instrumentOptions: ("All" | InstrumentType)[] = [
-  "All",
+const assetTypeOptions: InstrumentType[] = [
   "Money Market Fund",
   "Liquid Mutual Fund",
   "Overnight Fund",
@@ -52,8 +51,8 @@ export function YieldVisualisation() {
   const [amountInput, setAmountInput] = useState("50,00,000");
   const [selectedTenure, setSelectedTenure] = useState(30);
   const [customTenure, setCustomTenure] = useState("120");
-  const [instrumentFilter, setInstrumentFilter] = useState("All");
-  const [providerFilter, setProviderFilter] = useState("All");
+  const [selectedAssetTypes, setSelectedAssetTypes] = useState<InstrumentType[]>(assetTypeOptions);
+  const [selectedProviders, setSelectedProviders] = useState<string[] | null>(null);
   const [rankingMode, setRankingMode] = useState<RankingMode>("all");
   const [sortOrder, setSortOrder] = useState<SortOrder>("desc");
   const [activeRow, setActiveRow] = useState<YieldComparisonRow | null>(null);
@@ -64,6 +63,9 @@ export function YieldVisualisation() {
   const [fdApiError, setFdApiError] = useState<string | null>(hasFdRatesApi() ? null : "FD rates API not configured");
   const [mfApiError, setMfApiError] = useState<string | null>(hasMfRatesApi() ? null : "MF rates API not configured");
   const [syncing, setSyncing] = useState(false);
+  const topConfigRef = useRef<HTMLDivElement>(null);
+  const previousProviderOptionsRef = useRef<string[]>([]);
+  const [stickyOffset, setStickyOffset] = useState(104);
 
   const principal = parseAmount(amountInput);
   const tenureDays = selectedTenure === -1 ? Math.max(1, Number(customTenure) || 1) : selectedTenure;
@@ -74,18 +76,50 @@ export function YieldVisualisation() {
   const mockMfRows = rows.filter((row) => isMutualFundInstrument(row.instrument));
   const mfRows = liveMfRows.length ? liveMfRows : mockMfRows;
   const currentRow = rows.find((row) => row.instrument === "Current Account");
-  const fdProviders = ["All", ...Array.from(new Set(fdRows.map((row) => row.provider)))];
+  const providerOptions = useMemo(() => {
+    return Array.from(new Set([...mfRows, ...fdRows, ...(currentRow ? [currentRow] : [])].map((row) => row.provider))).sort();
+  }, [mfRows, fdRows, currentRow]);
+  const providerOptionsKey = providerOptions.join("\u0000");
+  const effectiveSelectedProviders = selectedProviders ?? providerOptions;
 
   const deploymentRows = getListingRows(rankingMode, sortOrder, { mfRows, fdRows, currentRow });
   const filteredDeploymentRows = deploymentRows.filter(({ kind, row }) => {
-    const matchesInstrument =
-      instrumentFilter === "All" ||
-      (instrumentFilter === "Fixed Deposit" && kind === "fd") ||
-      (instrumentFilter === "Current Account" && kind === "current") ||
-      row.instrument === instrumentFilter;
-    const matchesProvider = providerFilter === "All" || kind !== "fd" || (row as YieldComparisonRow).provider === providerFilter;
-    return matchesInstrument && matchesProvider;
+    const matchesAssetType = selectedAssetTypes.includes(row.instrument);
+    const matchesProvider = effectiveSelectedProviders.includes(row.provider);
+    return matchesAssetType && matchesProvider;
   });
+
+  useEffect(() => {
+    const element = topConfigRef.current;
+    if (!element) return;
+
+    const updateOffset = () => {
+      setStickyOffset(Math.ceil(element.getBoundingClientRect().height));
+    };
+    updateOffset();
+
+    const observer = new ResizeObserver(updateOffset);
+    observer.observe(element);
+    window.addEventListener("resize", updateOffset);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", updateOffset);
+    };
+  }, []);
+
+  useEffect(() => {
+    setSelectedProviders((current) => {
+      const previousOptions = previousProviderOptionsRef.current;
+      previousProviderOptionsRef.current = providerOptions;
+      if (current === null) return null;
+      const hadEveryPreviousOption =
+        previousOptions.length > 0 &&
+        current.length === previousOptions.length &&
+        previousOptions.every((option) => current.includes(option));
+      const nextSelectedProviders = hadEveryPreviousOption ? providerOptions : current.filter((provider) => providerOptions.includes(provider));
+      return arraysEqual(current, nextSelectedProviders) ? current : nextSelectedProviders;
+    });
+  }, [providerOptionsKey]);
 
   const loadLiveFdRows = useCallback(async () => {
     if (!hasFdRatesApi()) return;
@@ -177,60 +211,9 @@ export function YieldVisualisation() {
   };
 
   return (
-    <div className="yield-page">
-      <section className="figma-section">
-        <div className="section-title">
-          <h2>Deployment comparison</h2>
-          <span>All funds and FD rates sorted by annualised return</span>
-        </div>
-        <div className="accounting-toolbar yield-filter-toolbar">
-          <Filter size={18} />
-          <select value={instrumentFilter} onChange={(event) => setInstrumentFilter(event.target.value)}>
-            {instrumentOptions.map((option) => <option key={option}>{option}</option>)}
-          </select>
-          <select value={providerFilter} onChange={(event) => setProviderFilter(event.target.value)}>
-            {fdProviders.map((provider) => <option key={provider}>{provider}</option>)}
-          </select>
-          <select value={sortOrder} onChange={(event) => setSortOrder(event.target.value as SortOrder)}>
-            <option value="desc">Descending annualised</option>
-            <option value="asc">Ascending annualised</option>
-          </select>
-          <div className="yield-toggle">
-            <span>Return set</span>
-            <button className={rankingMode === "all" ? "active" : ""} onClick={() => setRankingMode("all")}>All</button>
-            <button className={rankingMode === "min" ? "active" : ""} onClick={() => setRankingMode("min")}>Min</button>
-            <button className={rankingMode === "median" ? "active" : ""} onClick={() => setRankingMode("median")}>Median</button>
-            <button className={rankingMode === "max" ? "active" : ""} onClick={() => setRankingMode("max")}>Max</button>
-          </div>
-        </div>
-        <div className="table-wrap">
-          <table className="figma-table yield-table">
-            <thead>
-              <tr>
-                <th>Option</th>
-                <th>Annualised Return</th>
-                <th className="align-right">Estimated Return</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredDeploymentRows.map(({ kind, row }) => (
-                <DeploymentTableRow
-                  key={`${kind}-table-${row.id}`}
-                  kind={kind}
-                  row={row}
-                  onClick={() => setActiveRow(row)}
-                />
-              ))}
-            </tbody>
-          </table>
-        </div>
-        <p className="yield-methodology">
-          Mutual fund rows use {liveMfRows.length ? "AMFI NAV history" : "mock fallback NAV history"}. FD rows use {liveFdRows.length ? "live scraper output" : "mock fallback rates"}.
-        </p>
-      </section>
-
-      <div className="yield-floating-config">
-        <div className="yield-floating-copy">
+    <div className="yield-page" style={{ "--yield-sticky-offset": `${stickyOffset}px` } as CSSProperties}>
+      <div className="yield-top-config" ref={topConfigRef}>
+        <div className="yield-top-copy">
           <h2>Compare returns across FDs, liquid funds, and other treasury instruments</h2>
           <span>{syncStatusLabel(syncStatus, fdApiError)} · {mfSyncStatusLabel(mfSyncStatus, mfApiError)}</span>
         </div>
@@ -265,6 +248,69 @@ export function YieldVisualisation() {
         </button>
       </div>
 
+      <section className="figma-section">
+        <div className="section-title">
+          <h2>Deployment comparison</h2>
+          <span>All funds and FD rates sorted by annualised return for the selected tenure</span>
+        </div>
+        <div className="accounting-toolbar yield-filter-toolbar">
+          <Filter size={18} />
+          <MultiSelectFilter
+            label="Asset type"
+            options={assetTypeOptions}
+            selected={selectedAssetTypes}
+            onChange={(values) => setSelectedAssetTypes(values)}
+          />
+          <MultiSelectFilter
+            label="AMC/Bank"
+            options={providerOptions}
+            selected={effectiveSelectedProviders}
+            onChange={(values) => setSelectedProviders(values)}
+          />
+          <select value={sortOrder} onChange={(event) => setSortOrder(event.target.value as SortOrder)}>
+            <option value="desc">Descending annualised</option>
+            <option value="asc">Ascending annualised</option>
+          </select>
+          <div className="yield-toggle">
+            <span>Return set</span>
+            <button className={rankingMode === "all" ? "active" : ""} onClick={() => setRankingMode("all")}>All</button>
+            <button className={rankingMode === "min" ? "active" : ""} onClick={() => setRankingMode("min")}>Min</button>
+            <button className={rankingMode === "median" ? "active" : ""} onClick={() => setRankingMode("median")}>Median</button>
+            <button className={rankingMode === "max" ? "active" : ""} onClick={() => setRankingMode("max")}>Max</button>
+          </div>
+        </div>
+        <div className="table-wrap yield-table-wrap">
+          <table className="figma-table yield-table">
+            <thead>
+              <tr>
+                <th>Option</th>
+                <th>Asset Type</th>
+                <th className="align-right">Annualised Return (last {tenureDays} days)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredDeploymentRows.length ? (
+                filteredDeploymentRows.map(({ kind, row }) => (
+                  <DeploymentTableRow
+                    key={`${kind}-table-${row.id}`}
+                    kind={kind}
+                    row={row}
+                    onClick={() => setActiveRow(row)}
+                  />
+                ))
+              ) : (
+                <tr>
+                  <td colSpan={3} className="yield-empty-row">No options match the selected filters</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+        <p className="yield-methodology">
+          Mutual fund rows use {liveMfRows.length ? "AMFI NAV history" : "mock fallback NAV history"}. FD rows use {liveFdRows.length ? "live scraper output" : "mock fallback rates"}.
+        </p>
+      </section>
+
       {activeRow && <YieldDetailSheet row={activeRow} onClose={() => setActiveRow(null)} />}
     </div>
   );
@@ -291,9 +337,73 @@ function DeploymentTableRow({
           <span>{getOptionLabel(kind, row)}</span>
         </div>
       </td>
-      <td>{annualisedLabel}</td>
-      <td className="align-right"><strong>{getEstimatedReturnLabel(kind, row)}</strong></td>
+      <td><span className="yield-asset-type">{row.instrument}</span></td>
+      <td className="align-right"><strong>{annualisedLabel}</strong></td>
     </tr>
+  );
+}
+
+function MultiSelectFilter<T extends string>({
+  label,
+  options,
+  selected,
+  onChange
+}: {
+  label: string;
+  options: T[];
+  selected: T[];
+  onChange: (selected: T[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const allSelected = options.length > 0 && selected.length === options.length && options.every((option) => selected.includes(option));
+  const buttonLabel = selected.length === 0 ? `${label}: None` : allSelected ? `${label}: All` : `${label}: ${selected.length} selected`;
+
+  useEffect(() => {
+    if (!open) return;
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!menuRef.current?.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
+  }, [open]);
+
+  const toggleOption = (option: T) => {
+    if (selected.includes(option)) {
+      onChange(selected.filter((selectedOption) => selectedOption !== option));
+      return;
+    }
+    onChange([...selected, option]);
+  };
+
+  return (
+    <div className="yield-multi-select" ref={menuRef}>
+      <button type="button" className="yield-multi-trigger" onClick={() => setOpen((current) => !current)}>
+        {buttonLabel}
+      </button>
+      {open && (
+        <div className="yield-multi-menu">
+          <div className="yield-multi-actions">
+            <button type="button" onClick={() => onChange(options)}>All</button>
+            <button type="button" onClick={() => onChange([])}>Clear</button>
+          </div>
+          <div className="yield-multi-options">
+            {options.map((option) => (
+              <label key={option}>
+                <input
+                  type="checkbox"
+                  checked={selected.includes(option)}
+                  onChange={() => toggleOption(option)}
+                />
+                <span>{option}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -420,6 +530,10 @@ function wait(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
+function arraysEqual<T>(left: T[], right: T[]) {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
 function syncStatusLabel(status: FdRatesSyncStatus | null, error: string | null) {
   if (status?.status === "running") return "Syncing FD rates";
   if (status?.status === "partial_success") return `Partial success · ${status.row_count} rows`;
@@ -466,11 +580,6 @@ function getAnnualisedReturnLabel(row: YieldComparisonRow) {
   }
   if (row.instrument === "Current Account") return row.annualisedReturnLabel;
   return row.annualisedReturnLabel;
-}
-
-function getEstimatedReturnLabel(kind: DecisionRow["kind"], row: YieldComparisonRow) {
-  if (kind === "mf") return row.estimatedReturn === undefined ? "Not available" : formatCurrency(row.estimatedReturn);
-  return row.estimatedReturnLabel;
 }
 
 function YieldIcon({ variant }: { variant: "fd" | "mf" | "idle" }) {
