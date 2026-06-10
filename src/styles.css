@@ -774,6 +774,28 @@ input[type="checkbox"] { width: 18px; height: 18px; accent-color: #2f66f3; }
   height: 16px;
   flex-shrink: 0;
 }
+.yield-view-switch {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  margin: 0 0 18px;
+}
+.yield-view-switch button {
+  min-height: 48px;
+  border: 0;
+  border-right: 1px solid var(--border);
+  background: transparent;
+  padding: 0 18px;
+  color: #555;
+  font-weight: 560;
+}
+.yield-view-switch button:last-child {
+  border-right: 0;
+}
+.yield-view-switch button.active {
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
 .yield-toggle {
   min-height: 48px;
   display: inline-flex;
@@ -869,6 +891,9 @@ input[type="checkbox"] { width: 18px; height: 18px; accent-color: #2f66f3; }
   font-size: 12px;
   font-weight: 560;
   white-space: nowrap;
+}
+.yield-category-table {
+  min-width: 760px;
 }
 .yield-avatar {
   background: #eef4ff;
@@ -968,6 +993,12 @@ input[type="checkbox"] { width: 18px; height: 18px; accent-color: #2f66f3; }
   }
   .yield-multi-menu {
     width: 100%;
+  }
+  .yield-view-switch {
+    width: 100%;
+  }
+  .yield-view-switch button {
+    flex: 1;
   }
   .portfolio-metrics, .erp-grid, .yield-summary-grid { grid-template-columns: 1fr 1fr; padding: 24px; }
   .mapping-control { grid-template-columns: 1fr; }

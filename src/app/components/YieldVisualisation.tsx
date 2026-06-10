@@ -35,10 +35,10 @@ type DecisionRow =
   | { kind: "mf"; row: YieldComparisonRow }
   | { kind: "current"; row: YieldComparisonRow };
 
-type RankingMode = "all" | "min" | "median" | "max";
+type ComparisonView = "instruments" | "benchmarks";
+type BenchmarkMode = "min" | "median" | "max";
 type SortOrder = "desc" | "asc";
 
-const investmentTypeOrder: InstrumentType[] = ["Money Market Fund", "Liquid Mutual Fund", "Overnight Fund", "Fixed Deposit"];
 const assetTypeOptions: InstrumentType[] = [
   "Money Market Fund",
   "Liquid Mutual Fund",
@@ -53,7 +53,8 @@ export function YieldVisualisation() {
   const [customTenure, setCustomTenure] = useState("120");
   const [selectedAssetTypes, setSelectedAssetTypes] = useState<InstrumentType[]>(assetTypeOptions);
   const [selectedProviders, setSelectedProviders] = useState<string[] | null>(null);
-  const [rankingMode, setRankingMode] = useState<RankingMode>("all");
+  const [comparisonView, setComparisonView] = useState<ComparisonView>("instruments");
+  const [benchmarkMode, setBenchmarkMode] = useState<BenchmarkMode>("max");
   const [sortOrder, setSortOrder] = useState<SortOrder>("desc");
   const [activeRow, setActiveRow] = useState<YieldComparisonRow | null>(null);
   const [liveFdRows, setLiveFdRows] = useState<YieldComparisonRow[]>([]);
@@ -82,12 +83,18 @@ export function YieldVisualisation() {
   const providerOptionsKey = providerOptions.join("\u0000");
   const effectiveSelectedProviders = selectedProviders ?? providerOptions;
 
-  const deploymentRows = getListingRows(rankingMode, sortOrder, { mfRows, fdRows, currentRow });
-  const filteredDeploymentRows = deploymentRows.filter(({ kind, row }) => {
+  const instrumentRows = getInstrumentRows(sortOrder, { mfRows, fdRows, currentRow });
+  const filteredInstrumentRows = instrumentRows.filter(({ row }) => {
     const matchesAssetType = selectedAssetTypes.includes(row.instrument);
     const matchesProvider = effectiveSelectedProviders.includes(row.provider);
     return matchesAssetType && matchesProvider;
   });
+  const categorySelections = buildCategorySelections(
+    [...mfRows, ...fdRows, ...(currentRow ? [currentRow] : [])].filter((row) => {
+      return row.available && selectedAssetTypes.includes(row.instrument) && effectiveSelectedProviders.includes(row.provider);
+    }),
+    benchmarkMode
+  );
 
   useEffect(() => {
     const element = topConfigRef.current;
@@ -250,8 +257,20 @@ export function YieldVisualisation() {
 
       <section className="figma-section">
         <div className="section-title">
-          <h2>Deployment comparison</h2>
-          <span>All funds and FD rates sorted by annualised return for the selected tenure</span>
+          <h2>{comparisonView === "instruments" ? "Deployment options" : "Category benchmarks"}</h2>
+          <span>
+            {comparisonView === "instruments"
+              ? "Every fund and FD rate sorted by annualised return"
+              : "Best available option in each asset type for the selected amount and tenure"}
+          </span>
+        </div>
+        <div className="yield-view-switch">
+          <button className={comparisonView === "instruments" ? "active" : ""} onClick={() => setComparisonView("instruments")}>
+            All instruments
+          </button>
+          <button className={comparisonView === "benchmarks" ? "active" : ""} onClick={() => setComparisonView("benchmarks")}>
+            Category benchmarks
+          </button>
         </div>
         <div className="accounting-toolbar yield-filter-toolbar">
           <Filter size={18} />
@@ -267,52 +286,81 @@ export function YieldVisualisation() {
             selected={effectiveSelectedProviders}
             onChange={(values) => setSelectedProviders(values)}
           />
-          <select value={sortOrder} onChange={(event) => setSortOrder(event.target.value as SortOrder)}>
-            <option value="desc">Descending annualised</option>
-            <option value="asc">Ascending annualised</option>
-          </select>
-          <div className="yield-toggle">
-            <span>Return set</span>
-            <button className={rankingMode === "all" ? "active" : ""} onClick={() => setRankingMode("all")}>All</button>
-            <button className={rankingMode === "min" ? "active" : ""} onClick={() => setRankingMode("min")}>Min</button>
-            <button className={rankingMode === "median" ? "active" : ""} onClick={() => setRankingMode("median")}>Median</button>
-            <button className={rankingMode === "max" ? "active" : ""} onClick={() => setRankingMode("max")}>Max</button>
-          </div>
+          {comparisonView === "instruments" && (
+            <select value={sortOrder} onChange={(event) => setSortOrder(event.target.value as SortOrder)}>
+              <option value="desc">Descending annualised</option>
+              <option value="asc">Ascending annualised</option>
+            </select>
+          )}
+          {comparisonView === "benchmarks" && (
+            <div className="yield-toggle">
+              <span>Benchmark</span>
+              <button className={benchmarkMode === "min" ? "active" : ""} onClick={() => setBenchmarkMode("min")}>Min</button>
+              <button className={benchmarkMode === "median" ? "active" : ""} onClick={() => setBenchmarkMode("median")}>Median</button>
+              <button className={benchmarkMode === "max" ? "active" : ""} onClick={() => setBenchmarkMode("max")}>Max</button>
+            </div>
+          )}
         </div>
-        <div className="table-wrap yield-table-wrap">
-          <table className="figma-table yield-table">
-            <thead>
-              <tr>
-                <th>Option</th>
-                <th>Asset Type</th>
-                <th className="align-right">Annualised Return</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredDeploymentRows.length ? (
-                filteredDeploymentRows.map(({ kind, row }) => (
-                <DeploymentTableRow
-                  key={`${kind}-table-${row.id}`}
-                  kind={kind}
-                  row={row}
-                  tenureDays={tenureDays}
-                  onClick={() => setActiveRow(row)}
-                />
-                ))
-              ) : (
-                <tr>
-                  <td colSpan={3} className="yield-empty-row">No options match the selected filters</td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+        {comparisonView === "instruments" ? (
+          <InstrumentUniverseTable
+            rows={filteredInstrumentRows}
+            tenureDays={tenureDays}
+            onSelectRow={setActiveRow}
+          />
+        ) : (
+          <CategoryBenchmarkTable
+            rows={categorySelections}
+            tenureDays={tenureDays}
+            onSelectRow={setActiveRow}
+          />
+        )}
         <p className="yield-methodology">
           Mutual fund rows use {liveMfRows.length ? "AMFI NAV history" : "mock fallback NAV history"}. FD rows use {liveFdRows.length ? "live scraper output" : "mock fallback rates"}.
         </p>
       </section>
 
       {activeRow && <YieldDetailSheet row={activeRow} onClose={() => setActiveRow(null)} />}
+    </div>
+  );
+}
+
+function InstrumentUniverseTable({
+  rows,
+  tenureDays,
+  onSelectRow
+}: {
+  rows: DecisionRow[];
+  tenureDays: number;
+  onSelectRow: (row: YieldComparisonRow) => void;
+}) {
+  return (
+    <div className="table-wrap yield-table-wrap">
+      <table className="figma-table yield-table">
+        <thead>
+          <tr>
+            <th>Option</th>
+            <th>Asset Type</th>
+            <th className="align-right">Annualised Return</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.length ? (
+            rows.map(({ kind, row }) => (
+              <DeploymentTableRow
+                key={`${kind}-table-${row.id}`}
+                kind={kind}
+                row={row}
+                tenureDays={tenureDays}
+                onClick={() => onSelectRow(row)}
+              />
+            ))
+          ) : (
+            <tr>
+              <td colSpan={3} className="yield-empty-row">No options match the selected filters</td>
+            </tr>
+          )}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -345,6 +393,86 @@ function DeploymentTableRow({
         <div className="yield-return-cell">
           <strong>{annualisedLabel}</strong>
           {kind === "mf" && <span className="yield-return-badge">Last {tenureDays} days</span>}
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+interface CategorySelectionRow {
+  instrument: InstrumentType;
+  row: YieldComparisonRow;
+}
+
+function CategoryBenchmarkTable({
+  rows,
+  tenureDays,
+  onSelectRow
+}: {
+  rows: CategorySelectionRow[];
+  tenureDays: number;
+  onSelectRow: (row: YieldComparisonRow) => void;
+}) {
+  return (
+    <div className="table-wrap yield-table-wrap">
+      <table className="figma-table yield-table yield-category-table">
+        <thead>
+          <tr>
+            <th>Asset Type</th>
+            <th>Option</th>
+            <th>AMC / Bank</th>
+            <th className="align-right">Annualised Return</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.length ? (
+            rows.map(({ instrument, row }) => (
+              <CategoryFundRow
+                key={`category-selected-${instrument}`}
+                instrument={instrument}
+                row={row}
+                tenureDays={tenureDays}
+                onClick={() => onSelectRow(row)}
+              />
+            ))
+          ) : (
+            <tr>
+              <td colSpan={4} className="yield-empty-row">No options match the selected filters</td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function CategoryFundRow({
+  instrument,
+  row,
+  tenureDays,
+  onClick
+}: {
+  instrument: InstrumentType;
+  row: YieldComparisonRow;
+  tenureDays: number;
+  onClick: () => void;
+}) {
+  const isMfRow = isMutualFundInstrument(row.instrument);
+  const variant = row.instrument === "Fixed Deposit" ? "fd" : row.instrument === "Current Account" ? "idle" : "mf";
+  return (
+    <tr onClick={onClick}>
+      <td><span className="yield-asset-type">{instrument}</span></td>
+      <td>
+        <div className="fund-cell">
+          <YieldIcon variant={variant} />
+          <span>{row.name}</span>
+        </div>
+      </td>
+      <td>{row.provider}</td>
+      <td className="align-right">
+        <div className="yield-return-cell">
+          <strong>{getAnnualisedReturnLabel(row)}</strong>
+          {isMfRow && <span className="yield-return-badge">Last {tenureDays} days</span>}
         </div>
       </td>
     </tr>
@@ -415,8 +543,7 @@ function MultiSelectFilter<T extends string>({
   );
 }
 
-function getListingRows(
-  mode: RankingMode,
+function getInstrumentRows(
   sortOrder: SortOrder,
   {
     mfRows,
@@ -428,33 +555,26 @@ function getListingRows(
   const eligibleFdRows = fdRows.filter((row) => row.available);
   const current = currentRow ? [{ kind: "current", row: currentRow } satisfies DecisionRow] : [];
 
-  if (mode === "all") {
-    return [
-      ...eligibleMfRows.map((row): DecisionRow => ({ kind: "mf", row })),
-      ...eligibleFdRows.map((row): DecisionRow => ({ kind: "fd", row }))
-    ].sort((a, b) => sortByAnnualised(a.row, b.row, sortOrder)).concat(current);
-  }
+  return [
+    ...eligibleMfRows.map((row): DecisionRow => ({ kind: "mf", row })),
+    ...eligibleFdRows.map((row): DecisionRow => ({ kind: "fd", row }))
+  ].sort((a, b) => sortByAnnualised(a.row, b.row, sortOrder)).concat(current);
+}
 
-  const representativeRows = investmentTypeOrder.flatMap((instrument): DecisionRow[] => {
-    const sourceRows = instrument === "Fixed Deposit" ? eligibleFdRows : eligibleMfRows.filter((row) => row.instrument === instrument);
-    const row = pickRepresentativeRow(sourceRows, mode);
-    if (!row) return [];
-    return [{ kind: instrument === "Fixed Deposit" ? "fd" : "mf", row }];
+function buildCategorySelections(rows: YieldComparisonRow[], benchmarkMode: BenchmarkMode) {
+  return assetTypeOptions.flatMap((instrument): CategorySelectionRow[] => {
+    const sourceRows = rows.filter((row) => row.instrument === instrument);
+    if (!sourceRows.length) return [];
+    const selectedRow = pickCategorySelection(sourceRows, benchmarkMode);
+    return [{ instrument, row: selectedRow }];
   });
-
-  return representativeRows.sort((a, b) => sortByAnnualised(a.row, b.row, sortOrder)).concat(current);
 }
 
-function pickRepresentativeRow(rows: YieldComparisonRow[], mode: Exclude<RankingMode, "all">) {
+function pickCategorySelection(rows: YieldComparisonRow[], benchmarkMode: BenchmarkMode) {
   const sortedRows = [...rows].sort((a, b) => getRankingAnnualisedReturn(a) - getRankingAnnualisedReturn(b));
-  if (!sortedRows.length) return undefined;
-  if (mode === "min") return sortedRows[0];
-  if (mode === "max") return sortedRows[sortedRows.length - 1];
-  return sortedRows[Math.floor(sortedRows.length / 2)];
-}
-
-function sortByAnnualisedDesc(a: YieldComparisonRow, b: YieldComparisonRow) {
-  return sortByAnnualised(a, b, "desc");
+  if (benchmarkMode === "min") return sortedRows[0];
+  if (benchmarkMode === "median") return sortedRows[Math.floor(sortedRows.length / 2)];
+  return sortedRows[sortedRows.length - 1];
 }
 
 function sortByAnnualised(a: YieldComparisonRow, b: YieldComparisonRow, sortOrder: SortOrder) {
