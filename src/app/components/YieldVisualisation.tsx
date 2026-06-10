@@ -285,18 +285,19 @@ export function YieldVisualisation() {
               <tr>
                 <th>Option</th>
                 <th>Asset Type</th>
-                <th className="align-right">Annualised Return (last {tenureDays} days)</th>
+                <th className="align-right">Annualised Return</th>
               </tr>
             </thead>
             <tbody>
               {filteredDeploymentRows.length ? (
                 filteredDeploymentRows.map(({ kind, row }) => (
-                  <DeploymentTableRow
-                    key={`${kind}-table-${row.id}`}
-                    kind={kind}
-                    row={row}
-                    onClick={() => setActiveRow(row)}
-                  />
+                <DeploymentTableRow
+                  key={`${kind}-table-${row.id}`}
+                  kind={kind}
+                  row={row}
+                  tenureDays={tenureDays}
+                  onClick={() => setActiveRow(row)}
+                />
                 ))
               ) : (
                 <tr>
@@ -319,10 +320,12 @@ export function YieldVisualisation() {
 function DeploymentTableRow({
   kind,
   row,
+  tenureDays,
   onClick
 }: {
   kind: DecisionRow["kind"];
   row: YieldComparisonRow;
+  tenureDays: number;
   onClick: () => void;
 }) {
   const variant = kind === "fd" ? "fd" : kind === "current" ? "idle" : "mf";
@@ -338,7 +341,12 @@ function DeploymentTableRow({
         </div>
       </td>
       <td><span className="yield-asset-type">{row.instrument}</span></td>
-      <td className="align-right"><strong>{annualisedLabel}</strong></td>
+      <td className="align-right">
+        <div className="yield-return-cell">
+          <strong>{annualisedLabel}</strong>
+          {kind === "mf" && <span className="yield-return-badge">Last {tenureDays} days</span>}
+        </div>
+      </td>
     </tr>
   );
 }

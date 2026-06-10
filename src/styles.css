@@ -853,6 +853,23 @@ input[type="checkbox"] { width: 18px; height: 18px; accent-color: #2f66f3; }
   font-weight: 560;
   white-space: nowrap;
 }
+.yield-return-cell {
+  display: grid;
+  justify-items: end;
+  gap: 6px;
+}
+.yield-return-badge {
+  display: inline-flex;
+  min-height: 24px;
+  align-items: center;
+  border: 1px solid rgba(47, 102, 243, 0.18);
+  background: #f3f7ff;
+  color: #3157d7;
+  padding: 0 8px;
+  font-size: 12px;
+  font-weight: 560;
+  white-space: nowrap;
+}
 .yield-avatar {
   background: #eef4ff;
   color: var(--blue);
